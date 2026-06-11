@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <link rel="manifest" href="manifest.json">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Amica Web/Mobile VRM View</title>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100vw; height: 100vh; 
+            overflow: hidden; background-color: #121212; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            color: white;
+        }
+        
+        #canvas { 
+            width: 100vw; height: 100vh; display: block; 
+        }
+
+        /* Subtitle Overlay */
+        #subtitle {
+            position: absolute;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 12px 24px;
+            border-radius: 16px;
+            font-size: 18px;
+            text-align: center;
+            width: 85%;
+            max-width: 500px;
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.1);
+            z-index: 5;
+            box-sizing: border-box;
+        }
+
+        /* Settings Panel Overlay */
+        #settings-toggle {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(30, 30, 30, 0.8);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            z-index: 20;
+            backdrop-filter: blur(5px);
+            font-weight: bold;
+        }
+
+        #settings-panel {
+            position: absolute;
+            top: 60px;
+            right: 15px;
+            width: calc(100vw - 30px);
+            max-width: 350px;
+            background: rgba(20, 20, 20, 0.95);
+            padding: 20px;
+            border-radius: 16px;
+            z-index: 20;
+            display: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            border: 1px solid rgba(255,255,255,0.1);
+            box-sizing: border-box;
+            backdrop-filter: blur(10px);
+        }
+
+        #settings-panel h3 { margin-top: 0; margin-bottom: 15px; font-size: 18px; border-bottom: 1px solid #333; padding-bottom: 10px;}
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; margin-bottom: 5px; color: #aaa; }
+        .form-group input, .form-group select { 
+            width: 100%; padding: 10px; border-radius: 8px; 
+            border: 1px solid #444; background: #2a2a2a; color: white; 
+            box-sizing: border-box; font-size: 14px;
+        }
+
+        /* Bottom Input Bar */
+        #bottom-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100vw;
+            padding: 15px;
+            background: rgba(15, 15, 15, 0.9);
+            display: flex;
+            gap: 10px;
+            box-sizing: border-box;
+            z-index: 10;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        #prompt-input {
+            flex-grow: 1;
+            padding: 12px 15px;
+            border-radius: 25px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
+        #prompt-input:focus { border-color: #66b2ff; }
+
+        #send-btn {
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: none;
+            background: #007bff;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #send-btn:hover { background: #0056b3; }
+        #send-btn:disabled { background: #555; color: #888; cursor: not-allowed; }
+    </style>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.154.0/examples/jsm/",
+          "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.min.js"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <button id="settings-toggle" onclick="toggleSettings()">⚙️ Settings</button>
+    
+    <div id="settings-panel">
+        <h3>Configuration</h3>
+        <div class="form-group">
+            <label>Google AI Studio API Key</label>
+            <input type="password" id="api-key" placeholder="Enter Gemini API Key">
+        </div>
+        <div class="form-group">
+            <label>Model Selector</label>
+            <select id="model-select">
+                <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                <option value="gemma-2-27b-it">gemma-2-27b-it</option>
+                <option value="gemini-2.0-flash" selected>gemini-2.0-flash</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Load Custom Avatar (.vrm)</label>
+            <input type="file" id="vrm-upload" accept=".vrm">
+        </div>
+        <div style="font-size: 12px; color: #888; margin-top: 10px;">
+            Touch/Drag to orbit camera.
+        </div>
+    </div>
+
+    <div id="subtitle">...</div>
+    <canvas id="canvas"></canvas>
+
+    <div id="bottom-bar">
+        <input type="text" id="prompt-input" placeholder="Type a prompt...">
+        <button id="send-btn">Send</button>
+    </div>
+
+    <script>
+        function toggleSettings() {
+            const panel = document.getElementById('settings-panel');
+            panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+        }
+
+        // Retrieve saved API Key on load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedKey = localStorage.getItem('gemini_api_key');
+            if (savedKey) {
+                document.getElementById('api-key').value = savedKey;
+            }
+        });
+
+        // Automatically save API Key when edited
+        document.getElementById('api-key').addEventListener('input', (e) => {
+            localStorage.setItem('gemini_api_key', e.target.value.trim());
+        });
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { VRMLoaderPlugin } from '@pixiv/three-vrm';
+
+        const canvas = document.getElementById('canvas');
+        const subtitle = document.getElementById('subtitle');
+        const sendBtn = document.getElementById('send-btn');
+        const promptInput = document.getElementById('prompt-input');
+
+        const systemInstruction = `You are an interactive, physically animated 3D AI companion.
+You express yourself through speech, default reactions, or custom physical movements.
+
+At the very end of your response, you can append EXACTLY ONE tag matching your context.
+You can use standard, preset behavior tags:
+- [ACTION: WALK] (To initiate a realistic walk cycle stride)
+- [ACTION: TURN_AROUND] (To turn 180 degrees)
+- [ACTION: WAVE] (To raise and wave an open right hand)
+- [ACTION: NOD] (To agree/nod)
+- [ACTION: SHAKE_HEAD] (To disagree/shake head)
+- [ACTION: SMILE] (To smile happily)
+- [ACTION: SAD] (To look sad/frown)
+- [ACTION: ANGRY] (To clench fists and lean forward angrily)
+- [ACTION: TILT_LEFT] (To tilt the head gracefully to the left)
+- [ACTION: TILT_RIGHT] (To tilt the head gracefully to the right)
+- [ACTION: SMILE_LEFT] (To smile with the left cheek/corner of the mouth)
+- [ACTION: SMILE_RIGHT] (To smile with the right cheek/corner of the mouth)
+- [ACTION: OPEN_MOUTH] (To open the mouth wide in surprise, gasp, or shock)
+- [ACTION: RAISE_RIGHT_BROW] (To raise the right eyebrow curiously)
+- [ACTION: RAISE_LEFT_BROW] (To raise the left eyebrow curiously)
+- [ACTION: CLOSE_LEFT_EYE] (To wink the left eye)
+- [ACTION: CLOSE_RIGHT_EYE] (To wink the right eye)
+
+OR you can output a custom sequential motion sequence using the MOTION tag, specifying joint degrees over keyframes:
+[MOTION: [{"dur": <seconds>, "pose": {"<property>": <value>, ...}}, ...]]
+
+Available Pose Properties (all values are simple degrees except hipsY which is in meters):
+- Arms/Shoulders:
+  - leftArmSwing, rightArmSwing: Forward/backward swing degrees (+90 is straight forward/up, 0 is at side, -45 is backwards)
+  - leftArmOut, rightArmOut: Sideways raise degrees (0 is straight down, 90 is straight out, -20 crossed in front)
+  - leftArmTwist, rightArmTwist: Twist degrees (+45 outwards, -45 inwards)
+- Legs/Hips:
+  - leftLegSwing, rightLegSwing: Swing forward/backward (+45 forward, -30 backward)
+  - leftLegOut, rightLegOut: Sideways abduction (+30 outwards)
+  - leftLegTwist, rightLegTwist: Twist (+30 outwards, -30 inwards)
+- Knees:
+  - leftKnee, rightKnee: Knee bending backwards (0 straight, 90 backwards)
+- Hands/Fingers:
+  - leftHandState, rightHandState: "rest", "fist", or "open"
+- Spine & Hips:
+  - bodyLean: Spine forward lean (+20 bends forward)
+  - hipsY: Hips vertical offset in meters (-0.2 is squat, 0 is standing)
+
+Examples:
+- Double Fist Pump: [MOTION: [{"dur": 0.3, "pose": {"leftArmSwing": 90, "rightArmSwing": 90, "leftHandState": "fist", "rightHandState": "fist", "bodyLean": 5}}, {"dur": 0.25, "pose": {"leftArmSwing": 110, "rightArmSwing": 110, "leftHandState": "fist", "rightHandState": "fist"}}, {"dur": 0.4, "pose": {}}]]
+
+Only output ONE tag (ACTION or MOTION) at the absolute end. Do not append text after it.`;
+
+        async function fetchGeminiResponse(prompt, apiKey, model) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const payload = {
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                contents: [{ role: "user", parts: [{ text: prompt }] }]
+            };
+
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error?.message || "Error contacting Gemini API");
+            }
+
+            if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+                const textParts = data.candidates[0].content.parts
+                    .filter(part => !part.thought && part.text)
+                    .map(part => part.text);
+                
+                return textParts.join("").trim();
+            }
+            return "";
+        }
+
+        async function handleSend() {
+            const prompt = promptInput.value.trim();
+            const apiKey = document.getElementById('api-key').value.trim();
+            const model = document.getElementById('model-select').value;
+
+            if (!prompt) return;
+            if (!apiKey) {
+                subtitle.innerText = "Error: Please enter API Key in Settings.";
+                subtitle.style.display = 'block';
+                setTimeout(() => subtitle.style.display = 'none', 3000);
+                return;
+            }
+
+            const silentUtterance = new SpeechSynthesisUtterance("");
+            silentUtterance.volume = 0;
+            window.speechSynthesis.speak(silentUtterance);
+
+            sendBtn.disabled = true;
+            promptInput.disabled = true;
+            subtitle.innerText = "Thinking...";
+            subtitle.style.display = 'block';
+
+            try {
+                let rawText = await fetchGeminiResponse(prompt, apiKey, model);
+                promptInput.value = "";
+
+                let motionJson = null;
+                let actionStr = null;
+
+                const motionRegex = /\[MOTION:\s*(\[[\s\S]*?\])\]/;
+                const motionMatch = rawText.match(motionRegex);
+                if (motionMatch) {
+                    try { motionJson = JSON.parse(motionMatch[1]); } catch (e) { console.error("JSON Error", e); }
+                    rawText = rawText.replace(motionRegex, "").trim();
+                }
+
+                const actionRegex = /\[ACTION:\s*([A-Z_]+)\]/;
+                const actionMatch = rawText.match(actionRegex);
+                if (actionMatch) {
+                    actionStr = actionMatch[1];
+                    rawText = rawText.replace(actionRegex, "").trim();
+                }
+
+                window.speak(rawText, actionStr, motionJson);
+            } catch (err) {
+                subtitle.innerText = "Error: " + err.message;
+                setTimeout(() => subtitle.style.display = 'none', 3000);
+            }
+
+            sendBtn.disabled = false;
+            promptInput.disabled = false;
+            promptInput.focus();
+        }
+
+        sendBtn.addEventListener('click', handleSend);
+        promptInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSend();
+        });
+
+        // --- ThreeJS & VRM Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(30.0, window.innerWidth / window.innerHeight, 0.1, 20.0);
+        camera.position.set(0.0, 1.4, 1.4);
+
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.screenSpacePanning = true;
+        controls.target.set(0.0, 1.4, 0.0);
+        controls.update();
+
+        const light = new THREE.DirectionalLight(0xffffff, 1.5);
+        light.position.set(1.0, 1.0, 1.0).normalize();
+        scene.add(light);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        let currentVrm = null;
+        let clock = new THREE.Clock();
+
+        const controlledBones = [
+            'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+            'leftUpperArm', 'leftLowerArm', 'leftHand',
+            'rightUpperArm', 'rightLowerArm', 'rightHand',
+            'leftUpperLeg', 'leftLowerLeg', 'leftFoot',
+            'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
+            'leftThumbMetacarpal', 'leftThumbProximal', 'leftThumbDistal',
+            'leftIndexProximal', 'leftIndexIntermediate', 'leftIndexDistal',
+            'leftMiddleProximal', 'leftMiddleIntermediate', 'leftMiddleDistal',
+            'leftRingProximal', 'leftRingIntermediate', 'leftRingDistal',
+            'leftLittleProximal', 'leftLittleIntermediate', 'leftLittleDistal',
+            'rightThumbMetacarpal', 'rightThumbProximal', 'rightThumbDistal',
+            'rightIndexProximal', 'rightIndexIntermediate', 'rightIndexDistal',
+            'rightMiddleProximal', 'rightMiddleIntermediate', 'rightMiddleDistal',
+            'rightRingProximal', 'rightRingIntermediate', 'rightRingDistal',
+            'rightLittleProximal', 'rightLittleIntermediate', 'rightLittleDistal'
+        ];
+
+        const defaultPose = {
+            leftUpperArm: [0, 0, -0.65],
+            rightUpperArm: [0, 0, 0.65],
+            spine: [0.05, 0, 0],
+            neck: [-0.05, 0, 0]
+        };
+
+        const boneStates = {};
+        controlledBones.forEach(boneName => {
+            boneStates[boneName] = { current: new THREE.Euler(0,0,0), target: new THREE.Euler(0,0,0) };
+            if (boneName === 'hips') {
+                boneStates[boneName].currentPos = new THREE.Vector3(0,0,0);
+                boneStates[boneName].targetPos = new THREE.Vector3(0,0,0);
+            }
+        });
+
+        let originalHipsPos = new THREE.Vector3(0, 0, 0);
+        let motionQueue = [];
+        let currentKeyframe = null;
+        let keyframeTime = 0;
+
+        const expressionTargets = {
+            happy: 0,
+            sad: 0,
+            angry: 0,
+            surprised: 0,
+            relaxed: 0,
+            blink: 0,
+            blinkLeft: 0,
+            blinkRight: 0,
+            aa: 0,
+            ee: 0,
+            ih: 0,
+            oo: 0,
+            uu: 0,
+            browOuterUpLeft: 0,
+            browOuterUpRight: 0,
+            browInnerUp: 0,
+            mouthSmileLeft: 0,
+            mouthSmileRight: 0
+        };
+        const expressionCurrents = { ...expressionTargets };
+
+        function applyHandState(side, state) {
+            const isLeft = side === 'left';
+            const sign = isLeft ? 1 : -1;
+            const fingers = ['Index', 'Middle', 'Ring', 'Little'];
+
+            if (state === 'fist') {
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * -0.3, sign * 0.3);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.5);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.5);
+                fingers.forEach(f => {
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 1.1);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 1.3);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * 1.0);
+                });
+            } else if (state === 'open') {
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, 0, sign * -0.15);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * -0.1);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * -0.1);
+                fingers.forEach(f => {
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * -0.15);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * -0.1);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * -0.1);
+                });
+            } else {
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * -0.1, sign * 0.1);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.15);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.1);
+                fingers.forEach(f => {
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 0.2);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 0.2);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * 0.15);
+                });
+            }
+        }
+
+        function applyPoseToTargets(pose) {
+            controlledBones.forEach(boneName => {
+                const def = defaultPose[boneName] || [0, 0, 0];
+                boneStates[boneName].target.set(def[0], def[1], def[2]);
+            });
+            if (boneStates['hips'].targetPos) boneStates['hips'].targetPos.set(0, 0, 0);
+
+            applyHandState('left', pose.leftHandState || 'rest');
+            applyHandState('right', pose.rightHandState || 'rest');
+
+            const toRad = Math.PI / 180;
+
+            const leftArmSwingVal = pose.leftArmSwing !== undefined ? pose.leftArmSwing : (pose.leftArm !== undefined ? pose.leftArm : 0);
+            const leftArmOutVal = pose.leftArmOut || 0;
+            const leftArmTwistVal = pose.leftArmTwist || 0;
+            const leftDefZ = defaultPose['leftUpperArm'] ? defaultPose['leftUpperArm'][2] : -0.65;
+            boneStates['leftUpperArm'].target.set(-leftArmSwingVal * toRad, leftArmTwistVal * toRad, leftDefZ - (leftArmOutVal * toRad));
+
+            const rightArmSwingVal = pose.rightArmSwing !== undefined ? pose.rightArmSwing : (pose.rightArm !== undefined ? pose.rightArm : 0);
+            const rightArmOutVal = pose.rightArmOut || 0;
+            const rightArmTwistVal = pose.rightArmTwist || 0;
+            const rightDefZ = defaultPose['rightUpperArm'] ? defaultPose['rightUpperArm'][2] : 0.65;
+            boneStates['rightUpperArm'].target.set(-rightArmSwingVal * toRad, rightArmTwistVal * toRad, rightDefZ + (rightArmOutVal * toRad));
+
+            const leftLegSwingVal = pose.leftLegSwing !== undefined ? pose.leftLegSwing : (pose.leftLeg !== undefined ? pose.leftLeg : 0);
+            boneStates['leftUpperLeg'].target.set(-leftLegSwingVal * toRad, (pose.leftLegTwist || 0) * toRad, -((pose.leftLegOut || 0) * toRad));
+            
+            const rightLegSwingVal = pose.rightLegSwing !== undefined ? pose.rightLegSwing : (pose.rightLeg !== undefined ? pose.rightLeg : 0);
+            boneStates['rightUpperLeg'].target.set(-rightLegSwingVal * toRad, (pose.rightLegTwist || 0) * toRad, ((pose.rightLegOut || 0) * toRad));
+
+            if (pose.leftKnee !== undefined) boneStates['leftLowerLeg'].target.set(pose.leftKnee * toRad, 0, 0);
+            if (pose.rightKnee !== undefined) boneStates['rightLowerLeg'].target.set(pose.rightKnee * toRad, 0, 0);
+            if (pose.bodyLean !== undefined) boneStates['spine'].target.set(pose.bodyLean * toRad, 0, 0);
+            if (pose.hipsY !== undefined) boneStates['hips'].targetPos.set(0, pose.hipsY, 0);
+
+            controlledBones.forEach(boneName => {
+                const exc = ['leftUpperArm', 'rightUpperArm', 'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg', 'spine', 'hips'];
+                if (pose[boneName] !== undefined && !exc.includes(boneName)) {
+                    boneStates[boneName].target.set(pose[boneName][0], pose[boneName][1], pose[boneName][2]);
+                }
+            });
+        }
+
+        window.playMotionSequence = function(sequence) {
+            if (!Array.isArray(sequence)) return;
+            motionQueue = sequence.filter(step => step && step.pose && typeof step.dur === 'number');
+            currentKeyframe = null;
+        };
+
+        const loader = new GLTFLoader();
+        loader.register((parser) => new VRMLoaderPlugin(parser));
+
+        function setupCamera(vrm) {
+            if (vrm.humanoid) {
+                const head = vrm.humanoid.getNormalizedBoneNode('head');
+                if (head) {
+                    const hp = new THREE.Vector3();
+                    head.getWorldPosition(hp);
+                    camera.position.set(0.0, hp.y + 0.15, 0.85);
+                    controls.target.set(0.0, hp.y + 0.15, 0.0);
+                    controls.update();
+                    return;
+                }
+            }
+        }
+
+        function initAvatarPose() {
+            const hipsNode = currentVrm.humanoid.getNormalizedBoneNode('hips');
+            if (hipsNode) originalHipsPos.copy(hipsNode.position);
+
+            applyPoseToTargets(defaultPose);
+            controlledBones.forEach(boneName => {
+                const boneNode = currentVrm.humanoid.getNormalizedBoneNode(boneName);
+                if (boneNode) {
+                    const state = boneStates[boneName];
+                    state.current.copy(state.target);
+                    boneNode.rotation.copy(state.target);
+                }
+            });
+        }
+
+        function loadVRM(url) {
+            if (currentVrm) {
+                scene.remove(currentVrm.scene);
+                currentVrm = null;
+            }
+            loader.load(url, (gltf) => {
+                const vrm = gltf.userData.vrm;
+                scene.add(vrm.scene);
+                currentVrm = vrm;
+                vrm.scene.rotation.y = Math.PI;
+                setupCamera(vrm);
+                initAvatarPose();
+            }, undefined, (err) => console.error("VRM Load Error", err));
+        }
+
+        loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
+
+        document.getElementById('vrm-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                loadVRM(url);
+                toggleSettings();
+            }
+        });
+
+        let targetRotationY = Math.PI; 
+        let expressionTimer = 0;
+        let isSpeaking = false;
+        let speakProgress = 0;
+
+        function getIdleOffsets() {
+            const time = clock.getElapsedTime();
+            return {
+                spine: [Math.sin(time * 1.2) * 0.015, Math.cos(time * 0.7) * 0.008, 0],
+                neck: [Math.sin(time * 0.8) * 0.01, Math.cos(time * 1.1) * 0.015, Math.sin(time * 0.5) * 0.01],
+                head: [Math.cos(time * 1.5) * 0.008, Math.sin(time * 0.9) * 0.01, Math.sin(time * 0.4) * 0.005]
+            };
+        }
+
+        window.speak = function(text, action, customMotion) {
+            window.speechSynthesis.cancel();
+            subtitle.innerText = text;
+            subtitle.style.display = 'block';
+
+            if (customMotion) window.playMotionSequence(customMotion);
+            else if (action) triggerAction(action);
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.onstart = () => { isSpeaking = true; };
+            utterance.onend = () => {
+                isSpeaking = false;
+                subtitle.style.display = 'none';
+                expressionTargets.aa = 0;
+            };
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function triggerAction(action) {
+            if (action === "TURN_AROUND") {
+                targetRotationY = (targetRotationY === Math.PI) ? 0 : Math.PI;
+            } else if (action === "WALK") {
+                window.playMotionSequence([
+                    { dur: 0.25, pose: { leftLegSwing: -25, rightLegSwing: 25, leftArmSwing: 20, rightArmSwing: -20, leftKnee: 10, rightKnee: 5, hipsY: -0.02, bodyLean: 5 } },
+                    { dur: 0.25, pose: { leftLegSwing: 10, rightLegSwing: -10, leftArmSwing: 0, rightArmSwing: 0, leftKnee: 45, rightKnee: 5, hipsY: 0.0, bodyLean: 4 } },
+                    { dur: 0.25, pose: { leftLegSwing: 25, rightLegSwing: -25, leftArmSwing: -20, rightArmSwing: 20, leftKnee: 5, rightKnee: 10, hipsY: -0.02, bodyLean: 5 } },
+                    { dur: 0.25, pose: { leftLegSwing: -10, rightLegSwing: 10, leftArmSwing: 0, rightArmSwing: 0, leftKnee: 5, rightKnee: 45, hipsY: 0.0, bodyLean: 4 } },
+                    { dur: 0.25, pose: { leftLegSwing: -25, rightLegSwing: 25, leftArmSwing: 20, rightArmSwing: -20, leftKnee: 10, rightKnee: 5, hipsY: -0.02, bodyLean: 5 } },
+                    { dur: 0.25, pose: { leftLegSwing: 10, rightLegSwing: -10, leftArmSwing: 0, rightArmSwing: 0, leftKnee: 45, rightKnee: 5, hipsY: 0.0, bodyLean: 4 } },
+                    { dur: 0.25, pose: { leftLegSwing: 25, rightLegSwing: -25, leftArmSwing: -20, rightArmSwing: 20, leftKnee: 5, rightKnee: 10, hipsY: -0.02, bodyLean: 5 } },
+                    { dur: 0.25, pose: { leftLegSwing: -10, rightLegSwing: 10, leftArmSwing: 0, rightArmSwing: 0, leftKnee: 5, rightKnee: 45, hipsY: 0.0, bodyLean: 4 } },
+                    { dur: 0.35, pose: {} }
+                ]);
+            } else if (action === "NOD") {
+                window.playMotionSequence([ { dur: 0.2, pose: { neck: [0.22, 0, 0] } }, { dur: 0.2, pose: { neck: [-0.08, 0, 0] } }, { dur: 0.2, pose: {} } ]);
+            } else if (action === "SHAKE_HEAD") {
+                window.playMotionSequence([{ dur: 0.2, pose: { neck: [0, 0.35, 0] } }, { dur: 0.2, pose: { neck: [0, -0.35, 0] } }, { dur: 0.2, pose: { neck: [0, 0.35, 0] } }, { dur: 0.2, pose: {} }]);
+            } else if (action === "WAVE") {
+                window.playMotionSequence([
+                    { dur: 0.3, pose: { rightArmSwing: 80, rightArmOut: 15, rightHandState: 'open' } },
+                    { dur: 0.25, pose: { rightArmSwing: 80, rightArmOut: 15, rightArmTwist: -20, rightHandState: 'open', rightLowerArm: [0, 1.2, 0] } },
+                    { dur: 0.25, pose: { rightArmSwing: 80, rightArmOut: 15, rightArmTwist: 20, rightHandState: 'open', rightLowerArm: [0, 0.6, 0] } },
+                    { dur: 0.25, pose: { rightArmSwing: 80, rightArmOut: 15, rightArmTwist: -20, rightHandState: 'open', rightLowerArm: [0, 1.2, 0] } },
+                    { dur: 0.4, pose: {} }
+                ]);
+            } else if (action === "ANGRY") {
+                window.playMotionSequence([{ dur: 0.4, pose: { bodyLean: 15, leftArmSwing: 40, leftArmOut: -10, leftHandState: 'fist', rightArmSwing: 40, rightArmOut: -10, rightHandState: 'fist' } }, { dur: 1.5, pose: { bodyLean: 15, leftArmSwing: 45, leftArmOut: -12, leftHandState: 'fist', rightArmSwing: 45, rightArmOut: -12, rightHandState: 'fist' } }, { dur: 0.5, pose: {} }]);
+            } else if (action === "SMILE") { 
+                expressionTargets.happy = 1.0;
+                expressionTimer = 3.0; 
+            } else if (action === "SAD") { 
+                expressionTargets.sad = 1.0;
+                expressionTimer = 3.0; 
+            } else if (action === "ANGRY_EXPR") { 
+                expressionTargets.angry = 1.0;
+                expressionTimer = 3.0; 
+            } else if (action === "TILT_LEFT") {
+                window.playMotionSequence([
+                    { dur: 0.4, pose: { neck: [0, 0, 0.25] } },
+                    { dur: 1.5, pose: { neck: [0, 0, 0.25] } },
+                    { dur: 0.4, pose: {} }
+                ]);
+            } else if (action === "TILT_RIGHT") {
+                window.playMotionSequence([
+                    { dur: 0.4, pose: { neck: [0, 0, -0.25] } },
+                    { dur: 1.5, pose: { neck: [0, 0, -0.25] } },
+                    { dur: 0.4, pose: {} }
+                ]);
+            } else if (action === "SMILE_LEFT") {
+                expressionTargets.mouthSmileLeft = 1.0;
+                expressionTargets.happy = 0.5;
+                expressionTimer = 2.5;
+            } else if (action === "SMILE_RIGHT") {
+                expressionTargets.mouthSmileRight = 1.0;
+                expressionTargets.happy = 0.5;
+                expressionTimer = 2.5;
+            } else if (action === "OPEN_MOUTH") {
+                expressionTargets.aa = 0.9;
+                expressionTimer = 2.0;
+            } else if (action === "RAISE_RIGHT_BROW") {
+                expressionTargets.browOuterUpRight = 1.0;
+                expressionTargets.browInnerUp = 0.8;
+                expressionTimer = 2.5;
+            } else if (action === "RAISE_LEFT_BROW") {
+                expressionTargets.browOuterUpLeft = 1.0;
+                expressionTargets.browInnerUp = 0.8;
+                expressionTimer = 2.5;
+            } else if (action === "CLOSE_LEFT_EYE") {
+                expressionTargets.blinkLeft = 1.0;
+                expressionTimer = 2.0;
+            } else if (action === "CLOSE_RIGHT_EYE") {
+                expressionTargets.blinkRight = 1.0;
+                expressionTimer = 2.0;
+            }
+        }
+
+        function updateBones(deltaTime) {
+            if (!currentVrm) return;
+
+            if (currentKeyframe === null && motionQueue.length > 0) {
+                currentKeyframe = motionQueue.shift();
+                keyframeTime = 0;
+                applyPoseToTargets(currentKeyframe.pose);
+            }
+
+            if (currentKeyframe !== null) {
+                keyframeTime += deltaTime;
+                if (keyframeTime >= currentKeyframe.dur) currentKeyframe = null;
+            } else applyPoseToTargets(defaultPose);
+
+            const idle = getIdleOffsets();
+
+            controlledBones.forEach(boneName => {
+                const boneNode = currentVrm.humanoid.getNormalizedBoneNode(boneName);
+                if (boneNode) {
+                    const state = boneStates[boneName];
+                    const speed = currentKeyframe ? (1.0 / currentKeyframe.dur) * 1.5 : 3.0;
+
+                    state.current.x = THREE.MathUtils.lerp(state.current.x, state.target.x, deltaTime * speed);
+                    state.current.y = THREE.MathUtils.lerp(state.current.y, state.target.y, deltaTime * speed);
+                    state.current.z = THREE.MathUtils.lerp(state.current.z, state.target.z, deltaTime * speed);
+
+                    let finalX = state.current.x;
+                    let finalY = state.current.y;
+                    let finalZ = state.current.z;
+
+                    if (idle[boneName]) {
+                        finalX += idle[boneName][0];
+                        finalY += idle[boneName][1];
+                        finalZ += idle[boneName][2];
+                    }
+
+                    boneNode.rotation.set(finalX, finalY, finalZ);
+
+                    if (boneName === 'hips' && state.currentPos) {
+                        state.currentPos.x = THREE.MathUtils.lerp(state.currentPos.x, state.targetPos.x, deltaTime * speed);
+                        state.currentPos.y = THREE.MathUtils.lerp(state.currentPos.y, state.targetPos.y, deltaTime * speed);
+                        state.currentPos.z = THREE.MathUtils.lerp(state.currentPos.z, state.targetPos.z, deltaTime * speed);
+                        
+                        const hipsIdleY = Math.sin(clock.getElapsedTime() * 1.2) * 0.003;
+                        boneNode.position.set(
+                            originalHipsPos.x + state.currentPos.x,
+                            originalHipsPos.y + state.currentPos.y + hipsIdleY,
+                            originalHipsPos.z + state.currentPos.z
+                        );
+                    }
+                }
+            });
+        }
+
+        function updateExpressions(deltaTime) {
+            if (!currentVrm || !currentVrm.expressionManager) return;
+
+            let autoBlink = 0;
+            if (expressionTargets.blinkLeft === 0 && expressionTargets.blinkRight === 0) {
+                autoBlink = Math.max(0, Math.sin(clock.getElapsedTime() * 2) > 0.98 ? 1 : 0);
+            }
+            expressionCurrents.blink = THREE.MathUtils.lerp(expressionCurrents.blink, autoBlink, deltaTime * 15.0);
+
+            let targetAa = expressionTargets.aa;
+            if (isSpeaking) {
+                speakProgress += deltaTime * 14;
+                const mouthOpen = (Math.sin(speakProgress) + 1.0) / 2.0; 
+                targetAa = mouthOpen * 0.75;
+            }
+
+            Object.keys(expressionTargets).forEach(key => {
+                let target = expressionTargets[key];
+                if (key === 'aa') target = targetAa;
+
+                expressionCurrents[key] = THREE.MathUtils.lerp(expressionCurrents[key], target, deltaTime * 8.0);
+                currentVrm.expressionManager.setValue(key, expressionCurrents[key]);
+            });
+
+            if (expressionTimer > 0) {
+                expressionTimer -= deltaTime;
+                if (expressionTimer <= 0) {
+                    expressionTargets.happy = 0;
+                    expressionTargets.sad = 0;
+                    expressionTargets.angry = 0;
+                    expressionTargets.blinkLeft = 0;
+                    expressionTargets.blinkRight = 0;
+                    expressionTargets.browOuterUpLeft = 0;
+                    expressionTargets.browOuterUpRight = 0;
+                    expressionTargets.browInnerUp = 0;
+                    expressionTargets.mouthSmileLeft = 0;
+                    expressionTargets.mouthSmileRight = 0;
+                    expressionTargets.aa = 0;
+                }
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = clock.getDelta();
+
+            if (currentVrm) {
+                currentVrm.scene.rotation.y = THREE.MathUtils.lerp(currentVrm.scene.rotation.y, targetRotationY, deltaTime * 5.0);
+                updateBones(deltaTime);
+                updateExpressions(deltaTime);
+                currentVrm.update(deltaTime);
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
