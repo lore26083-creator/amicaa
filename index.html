@@ -206,6 +206,8 @@
         let longTermMemory = []; // Constant-length semantic index. Holds { summary, embedding, image }
         let currentEmotionalState = "neutral";
         let lastFocusGrid = 4; // Default to Center grid coordinate (3x3 grid: 0 to 8)
+        let visemeQueue = [];  // For advanced lip-sync vowels
+        let visemeTimer = 0;   // Timeline pacing for spoken vowels
 
         // WebRTC Phone/PC Physical Camera Element
         const videoElement = document.createElement('video');
@@ -236,7 +238,21 @@ Your responses must strictly be valid JSON matching the following schema. Do not
 {
   "reply": "Your spoken conversational response here",
   "action": "An action tag (e.g. WAVE, WALK, NOD, SHAKE_HEAD, SMILE, SAD, ANGRY, TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE, or null)",
-  "custom_motion": "An optional array of custom poses if action is 'MOTION', matching [MOTION: <JSON>]",
+  "custom_motion": [
+    {
+      "dur": 0.4,
+      "reps": 1,
+      "delay": 0.0,
+      "pose": {
+        "leftUpperArm": [0, 0, -45],
+        "rightUpperArm": [0, 0, 45],
+        "leftForearmRotate": 90,
+        "rightForearmRotate": 0,
+        "headFrontalTilt": 15,
+        "smileIntensity": 0.8
+      }
+    }
+  ],
   "importance": <integer 1 to 10 evaluating the cognitive importance of this interaction>,
   "save_ltm": <boolean, true if you decide this contains important personal or factual details to be archived to Long-Term Memory>,
   "ltm_summary": "A concise, high-density summary sentence of this memory to be saved if save_ltm is true, or null",
@@ -254,7 +270,16 @@ Preset Action Tags:
 - ANGRY (fists clenched)
 - TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE
 
-You have access to a sliding short-term text buffer (max 10) and a sliding short-term vision buffer (max 3), as well as retrieved context matching your Long-Term Memory.`;
+About Action Sequences in "custom_motion":
+- You can specify an array of keyframes.
+- "dur": Transition duration in seconds.
+- "reps": Repeat/cycle count for this step (helps avoid spamming).
+- "delay": Hold duration in seconds at the target pose.
+- "pose": Custom skeleton and morph properties:
+  - Bone names (e.g., "leftUpperArm", "rightUpperArm") accept direct [X, Y, Z] rotation angles in degrees.
+  - "leftForearmRotate" & "rightForearmRotate": degrees of internal wrist/forearm twist (limited 0 to 180 degrees).
+  - "headFrontalTilt": degrees of forward/backward pitch tilt (nodding/looking up and down, orthogonal to side tilt).
+  - "smileIntensity": 0.0 to 1.0 custom expression smile factor.`;
 
         // Cosine Similarity helper for Vector Search over LTM
         function cosineSimilarity(vecA, vecB) {
@@ -641,7 +666,8 @@ ${visionSummary || "No active visual history"}
             browOuterUpRight: 0,
             browInnerUp: 0,
             mouthSmileLeft: 0,
-            mouthSmileRight: 0
+            mouthSmileRight: 0,
+            smileIntensity: 0 // Added dedicated custom modifier mapping
         };
         const expressionCurrents = { ...expressionTargets };
 
@@ -681,6 +707,7 @@ ${visionSummary || "No active visual history"}
         }
 
         function applyPoseToTargets(pose) {
+            // Apply standard baseline offsets to skeletal joints
             controlledBones.forEach(boneName => {
                 const def = defaultPose[boneName] || [0, 0, 0];
                 boneStates[boneName].target.set(def[0], def[1], def[2]);
@@ -692,18 +719,70 @@ ${visionSummary || "No active visual history"}
 
             const toRad = Math.PI / 180;
 
-            const leftArmSwingVal = pose.leftArmSwing !== undefined ? pose.leftArmSwing : (pose.leftArm !== undefined ? pose.leftArm : 0);
-            const leftArmOutVal = pose.leftArmOut || 0;
-            const leftArmTwistVal = pose.leftArmTwist || 0;
-            const leftDefZ = defaultPose['leftUpperArm'] ? defaultPose['leftUpperArm'][2] : -0.65;
-            boneStates['leftUpperArm'].target.set(-leftArmSwingVal * toRad, leftArmTwistVal * toRad, leftDefZ - (leftArmOutVal * toRad));
+            // Direct bone array override (in degrees) or traditional parameter mapping for Left Upper Arm
+            if (Array.isArray(pose.leftUpperArm) && pose.leftUpperArm.length === 3) {
+                boneStates['leftUpperArm'].target.set(
+                    pose.leftUpperArm[0] * toRad,
+                    pose.leftUpperArm[1] * toRad,
+                    pose.leftUpperArm[2] * toRad
+                );
+            } else {
+                const leftArmSwingVal = pose.leftArmSwing !== undefined ? pose.leftArmSwing : (pose.leftArm !== undefined ? pose.leftArm : 0);
+                const leftArmOutVal = pose.leftArmOut || 0;
+                const leftArmTwistVal = pose.leftArmTwist || 0;
+                const leftDefZ = defaultPose['leftUpperArm'] ? defaultPose['leftUpperArm'][2] : -0.65;
+                boneStates['leftUpperArm'].target.set(-leftArmSwingVal * toRad, leftArmTwistVal * toRad, leftDefZ - (leftArmOutVal * toRad));
+            }
 
-            const rightArmSwingVal = pose.rightArmSwing !== undefined ? pose.rightArmSwing : (pose.rightArm !== undefined ? pose.rightArm : 0);
-            const rightArmOutVal = pose.rightArmOut || 0;
-            const rightArmTwistVal = pose.rightArmTwist || 0;
-            const rightDefZ = defaultPose['rightUpperArm'] ? defaultPose['rightUpperArm'][2] : 0.65;
-            boneStates['rightUpperArm'].target.set(-rightArmSwingVal * toRad, rightArmTwistVal * toRad, rightDefZ + (rightArmOutVal * toRad));
+            // Direct bone array override (in degrees) or traditional parameter mapping for Right Upper Arm
+            if (Array.isArray(pose.rightUpperArm) && pose.rightUpperArm.length === 3) {
+                boneStates['rightUpperArm'].target.set(
+                    pose.rightUpperArm[0] * toRad,
+                    pose.rightUpperArm[1] * toRad,
+                    pose.rightUpperArm[2] * toRad
+                );
+            } else {
+                const rightArmSwingVal = pose.rightArmSwing !== undefined ? pose.rightArmSwing : (pose.rightArm !== undefined ? pose.rightArm : 0);
+                const rightArmOutVal = pose.rightArmOut || 0;
+                const rightArmTwistVal = pose.rightArmTwist || 0;
+                const rightDefZ = defaultPose['rightUpperArm'] ? defaultPose['rightUpperArm'][2] : 0.65;
+                boneStates['rightUpperArm'].target.set(-rightArmSwingVal * toRad, rightArmTwistVal * toRad, rightDefZ + (rightArmOutVal * toRad));
+            }
 
+            // Left Lower Arm / Forearm handling with internal rotation limit (max 180 degrees)
+            if (Array.isArray(pose.leftLowerArm) && pose.leftLowerArm.length === 3) {
+                boneStates['leftLowerArm'].target.set(pose.leftLowerArm[0] * toRad, pose.leftLowerArm[1] * toRad, pose.leftLowerArm[2] * toRad);
+            } else {
+                boneStates['leftLowerArm'].target.set(0, 0, 0);
+            }
+            if (pose.leftForearmRotate !== undefined) {
+                const leftForearmRotVal = Math.max(0, Math.min(180, pose.leftForearmRotate));
+                boneStates['leftLowerArm'].target.y = leftForearmRotVal * toRad;
+            }
+
+            // Right Lower Arm / Forearm handling with internal rotation limit (max 180 degrees)
+            if (Array.isArray(pose.rightLowerArm) && pose.rightLowerArm.length === 3) {
+                boneStates['rightLowerArm'].target.set(pose.rightLowerArm[0] * toRad, pose.rightLowerArm[1] * toRad, pose.rightLowerArm[2] * toRad);
+            } else {
+                boneStates['rightLowerArm'].target.set(0, 0, 0);
+            }
+            if (pose.rightForearmRotate !== undefined) {
+                const rightForearmRotVal = Math.max(0, Math.min(180, pose.rightForearmRotate));
+                boneStates['rightLowerArm'].target.y = -rightForearmRotVal * toRad; // mirrored twist
+            }
+
+            // Neck / Head tilting with custom Frontal Tilt override (pitch angle, not side lateral)
+            if (Array.isArray(pose.neck) && pose.neck.length === 3) {
+                boneStates['neck'].target.set(pose.neck[0] * toRad, pose.neck[1] * toRad, pose.neck[2] * toRad);
+            } else {
+                const def = defaultPose['neck'] || [-0.05, 0, 0];
+                boneStates['neck'].target.set(def[0], def[1], def[2]);
+            }
+            if (pose.headFrontalTilt !== undefined) {
+                boneStates['neck'].target.x = pose.headFrontalTilt * toRad;
+            }
+
+            // Upper leg joint constraints
             const leftLegSwingVal = pose.leftLegSwing !== undefined ? pose.leftLegSwing : (pose.leftLeg !== undefined ? pose.leftLeg : 0);
             boneStates['leftUpperLeg'].target.set(-leftLegSwingVal * toRad, (pose.leftLegTwist || 0) * toRad, -((pose.leftLegOut || 0) * toRad));
             
@@ -715,17 +794,68 @@ ${visionSummary || "No active visual history"}
             if (pose.bodyLean !== undefined) boneStates['spine'].target.set(pose.bodyLean * toRad, 0, 0);
             if (pose.hipsY !== undefined) boneStates['hips'].targetPos.set(0, pose.hipsY, 0);
 
+            // Generic fallback skeletal bone targets (array in degrees [X, Y, Z])
             controlledBones.forEach(boneName => {
-                const exc = ['leftUpperArm', 'rightUpperArm', 'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg', 'spine', 'hips'];
+                const exc = [
+                    'leftUpperArm', 'rightUpperArm', 'leftUpperLeg', 'rightUpperLeg', 
+                    'leftLowerLeg', 'rightLowerLeg', 'spine', 'hips', 
+                    'leftLowerArm', 'rightLowerArm', 'neck'
+                ];
                 if (pose[boneName] !== undefined && !exc.includes(boneName)) {
-                    boneStates[boneName].target.set(pose[boneName][0], pose[boneName][1], pose[boneName][2]);
+                    const rot = pose[boneName];
+                    if (Array.isArray(rot) && rot.length === 3) {
+                        boneStates[boneName].target.set(rot[0] * toRad, rot[1] * toRad, rot[2] * toRad);
+                    }
                 }
             });
+
+            // Handle smile intensity morph mapping
+            if (pose.smileIntensity !== undefined) {
+                expressionTargets.smileIntensity = Math.max(0, Math.min(1.0, pose.smileIntensity));
+            } else {
+                expressionTargets.smileIntensity = 0;
+            }
         }
 
+        // Expanded Sequence player to safely support loops (reps) and hold times (delays) per step
         window.playMotionSequence = function(sequence) {
             if (!Array.isArray(sequence)) return;
-            motionQueue = sequence.filter(step => step && step.pose && typeof step.dur === 'number');
+            motionQueue = [];
+
+            sequence.forEach(step => {
+                if (!step || typeof step.dur !== 'number') return;
+                const reps = Math.max(1, parseInt(step.reps) || 1);
+                const delay = Math.max(0, parseFloat(step.delay) || 0);
+                const pose = step.pose || {};
+                const exprs = step.expressions || {};
+
+                for (let r = 0; r < reps; r++) {
+                    // 1. Transition into target pose
+                    motionQueue.push({
+                        dur: step.dur,
+                        pose: pose,
+                        expressions: exprs
+                    });
+                    
+                    // 2. Hold target pose during pause/delay
+                    if (delay > 0) {
+                        motionQueue.push({
+                            dur: delay,
+                            pose: pose,
+                            expressions: exprs
+                        });
+                    }
+
+                    // 3. Smoothly return to baseline/default posture before repeating
+                    if (reps > 1 && r < reps - 1) {
+                        motionQueue.push({
+                            dur: step.dur,
+                            pose: {}, 
+                            expressions: {}
+                        });
+                    }
+                }
+            });
             currentKeyframe = null;
         };
 
@@ -810,6 +940,22 @@ ${visionSummary || "No active visual history"}
             subtitle.innerText = text;
             subtitle.style.display = 'block';
 
+            // Advanced parsing to divide spoken dialogue into distinct phoneme intervals
+            visemeQueue = [];
+            const cleanText = text.toLowerCase().replace(/[^a-z ]/g, '');
+            for (let i = 0; i < cleanText.length; i++) {
+                const char = cleanText[i];
+                let viseme = 'rest';
+                if (char === 'a') viseme = 'aa';
+                else if (char === 'e') viseme = 'ee';
+                else if (char === 'i' || char === 'y') viseme = 'ih';
+                else if (char === 'o') viseme = 'oo';
+                else if (char === 'u' || char === 'w') viseme = 'uu';
+                else if (char === ' ') viseme = 'rest';
+                visemeQueue.push(viseme);
+            }
+            visemeTimer = 0;
+
             if (customMotion) window.playMotionSequence(customMotion);
             else if (action) triggerAction(action);
 
@@ -819,6 +965,10 @@ ${visionSummary || "No active visual history"}
                 isSpeaking = false;
                 subtitle.style.display = 'none';
                 expressionTargets.aa = 0;
+                expressionTargets.ee = 0;
+                expressionTargets.ih = 0;
+                expressionTargets.oo = 0;
+                expressionTargets.uu = 0;
             };
             window.speechSynthesis.speak(utterance);
         }
@@ -964,11 +1114,38 @@ ${visionSummary || "No active visual history"}
             }
             expressionCurrents.blink = THREE.MathUtils.lerp(expressionCurrents.blink, autoBlink, deltaTime * 15.0);
 
+            // Sophisticated Lip Sync tracking
             let targetAa = expressionTargets.aa;
+            let targetEe = expressionTargets.ee;
+            let targetIh = expressionTargets.ih;
+            let targetOo = expressionTargets.oo;
+            let targetUu = expressionTargets.uu;
+
             if (isSpeaking) {
-                speakProgress += deltaTime * 14;
-                const mouthOpen = (Math.sin(speakProgress) + 1.0) / 2.0; 
-                targetAa = mouthOpen * 0.75;
+                visemeTimer += deltaTime;
+                const charInterval = 0.08; // Roughly 12.5 characters per second reading speed
+                const currentIndex = Math.floor(visemeTimer / charInterval);
+
+                targetAa = 0;
+                targetEe = 0;
+                targetIh = 0;
+                targetOo = 0;
+                targetUu = 0;
+
+                if (currentIndex < visemeQueue.length) {
+                    const viseme = visemeQueue[currentIndex];
+                    const intensity = 0.6 + Math.sin(visemeTimer * 25) * 0.25; // natural talking mouth flutter
+
+                    if (viseme === 'aa') targetAa = intensity;
+                    else if (viseme === 'ee') targetEe = intensity;
+                    else if (viseme === 'ih') targetIh = intensity;
+                    else if (viseme === 'oo') targetOo = intensity;
+                    else if (viseme === 'uu') targetUu = intensity;
+                } else {
+                    // Soft fading flutter if audio is still speaking but queue is exhausted
+                    const mouthOpen = (Math.sin(visemeTimer * 12) + 1.0) / 2.0;
+                    targetAa = mouthOpen * 0.4;
+                }
             }
 
             // Slowly blend emotional persistent state values to facial expressions
@@ -980,10 +1157,29 @@ ${visionSummary || "No active visual history"}
             else if (currentEmotionalState === "sad") baselineSad = 0.55;
             else if (currentEmotionalState === "angry") baselineAngry = 0.55;
 
+            // Compute custom smile intensity adjustments dynamically
+            let targetSmileLeft = expressionTargets.mouthSmileLeft;
+            let targetSmileRight = expressionTargets.mouthSmileRight;
+            let targetHappy = expressionTargets.happy;
+
+            if (expressionTargets.smileIntensity > 0) {
+                targetSmileLeft = expressionTargets.smileIntensity;
+                targetSmileRight = expressionTargets.smileIntensity;
+                targetHappy = Math.max(targetHappy, expressionTargets.smileIntensity * 0.5); // add soft organic eye squinting
+            }
+
             Object.keys(expressionTargets).forEach(key => {
                 let target = expressionTargets[key];
+                
+                // Route dynamic mouth and custom smile properties
                 if (key === 'aa') target = targetAa;
-                else if (key === 'happy' && expressionTimer <= 0) target = baselineHappy;
+                else if (key === 'ee') target = targetEe;
+                else if (key === 'ih') target = targetIh;
+                else if (key === 'oo') target = targetOo;
+                else if (key === 'uu') target = targetUu;
+                else if (key === 'mouthSmileLeft') target = targetSmileLeft;
+                else if (key === 'mouthSmileRight') target = targetSmileRight;
+                else if (key === 'happy' && expressionTimer <= 0) target = targetHappy || baselineHappy;
                 else if (key === 'sad' && expressionTimer <= 0) target = baselineSad;
                 else if (key === 'angry' && expressionTimer <= 0) target = baselineAngry;
 
@@ -1005,6 +1201,10 @@ ${visionSummary || "No active visual history"}
                     expressionTargets.mouthSmileLeft = 0;
                     expressionTargets.mouthSmileRight = 0;
                     expressionTargets.aa = 0;
+                    expressionTargets.ee = 0;
+                    expressionTargets.ih = 0;
+                    expressionTargets.oo = 0;
+                    expressionTargets.uu = 0;
                 }
             }
         }
