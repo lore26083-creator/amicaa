@@ -250,11 +250,21 @@ Your responses must strictly be valid JSON matching the following schema. Do not
         "rightKnee": 0.0,
         "leftLegSwing": 0.0,
         "rightLegSwing": 0.0,
-        "leftUpperArm": [0, 0, -45],
-        "rightUpperArm": [0, 0, 45],
-        "leftForearmRotate": 90,
-        "rightForearmRotate": 90,
-        "headFrontalTilt": 15,
+        "leftLegOut": 0.0,
+        "rightLegOut": 0.0,
+        "leftLegTwist": 0.0,
+        "rightLegTwist": 0.0,
+        "leftArmSwing": 0.0,
+        "rightArmSwing": 0.0,
+        "leftArmOut": 0.0,
+        "rightArmOut": 0.0,
+        "leftArmTwist": 0.0,
+        "rightArmTwist": 0.0,
+        "leftForearmRotate": 0.0,
+        "rightForearmRotate": 0.0,
+        "leftHandState": "rest",
+        "rightHandState": "rest",
+        "headFrontalTilt": 0.0,
         "smileIntensity": 0.8
       }
     }
@@ -267,34 +277,36 @@ Your responses must strictly be valid JSON matching the following schema. Do not
 }
 
 Preset Action Tags:
-- WALK (initiate a walking cycle)
-- WAVE (raise/wave right hand)
+- WALK (initiate a natural forward-facing walking cycle)
+- WAVE (raise/wave right hand frontwise)
 - NOD (agree)
 - SHAKE_HEAD (disagree)
 - SMILE (smile happily)
 - SAD (look sad)
 - ANGRY (fists clenched)
-- HUG (wrap arms forward symmetrically for a warm embrace)
+- HUG (wrap arms forward symmetrically for a warm, frontwise embrace)
 - JUMP (bend knees, spring high into the air, absorb landing impact)
 - TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE
 
-About Action Sequences in "custom_motion":
-- You can specify an array of keyframes.
-- "dur": Transition duration in seconds.
-- "reps": Repeat/cycle count for this step (helps avoid spamming).
-- "delay": Hold duration in seconds at the target pose.
-- "pose" containing:
-  - "hipsY": Vertical position offset of the hips (e.g., -0.3 to 0.6) for crouches, bounces, jumps, or landings.
-  - "bodyLean": Forward/backward tilt angle of the spine in degrees.
-  - "leftKnee" / "rightKnee": Knee flexion angle (0 to 90 degrees) for crouches, walking, or jumping.
-  - "leftLegSwing" / "rightLegSwing": Forward/backward leg swinging angles in degrees.
-  - "leftArmSwing" / "rightArmSwing": Forward/backward arm swing angles in degrees.
-  - "leftArmOut" / "rightArmOut": Outward arm raise angles in degrees.
-  - "leftArmTwist" / "rightArmTwist": Upper arm rotation angles in degrees.
-  - "leftUpperArm" / "rightUpperArm": Direct [X, Y, Z] joint rotation angles in degrees.
-  - "leftForearmRotate" / "rightForearmRotate": Forearm internal rotation/wrist twist angle (-180 to 180 degrees). Use identical values to twist symmetrically.
-  - "headFrontalTilt": Neck pitch angle looking up or down (-45 to 45 degrees, orthogonal to side tilt).
-  - "smileIntensity": 0.0 to 1.0 custom expression smile factor.`;
+Detailed Explanation of "custom_motion" Pose Parameters:
+You can build custom skeletal keyframe sequences using these properties. Degree values must be specified in normal numerical limits:
+- "hipsY": Vertical position offset of the hips (e.g., -0.3 to 0.6) for crouches, bounces, jumps, or landings.
+- "bodyLean": Forward/backward tilt angle of the spine in degrees. Positive tilts the character FORWARD (frontwise), negative tilts BACKWARD.
+- "headFrontalTilt": Neck pitch angle in degrees. Positive tilts the head DOWN, negative tilts UP.
+- "leftArmSwing" / "rightArmSwing": Forward/backward upper arm swing in degrees. Positive swings the arm FORWARD (frontwise), negative swings it BACKWARD.
+- "leftArmOut" / "rightArmOut": Lateral upper arm raise in degrees. Positive raises the arm sideways AWAY from the body (towards horizontal), negative pulls it INWARD.
+- "leftArmTwist" / "rightArmTwist": Upper arm twist in degrees (roll axis).
+- "leftForearmRotate" / "rightForearmRotate": Forearm rotation/wrist twist angle (-180 to 180 degrees).
+- "leftHandState" / "rightHandState": Finger curling state:
+  - "fist" closes all fingers downward and inward towards the palm.
+  - "open" extends all fingers flat and slightly backward.
+  - "rest" curves fingers slightly into a natural, soft resting posture.
+- "leftLegSwing" / "rightLegSwing": Upper leg swing in degrees. Positive swings the leg FORWARD, negative BACKWARD.
+- "leftLegOut" / "rightLegOut": Leg abduction in degrees. Positive swings the leg OUTWARD, negative INWARD.
+- "leftLegTwist" / "rightLegTwist": Upper leg twist/rotation in degrees.
+- "leftKnee" / "rightKnee": Knee bending angle (0 to 90 degrees) to flex the knee backward.
+- "smileIntensity": 0.0 to 1.0 custom expression smile factor.
+- You can also output direct joint overrides if needed using degree arrays [X, Y, Z] (e.g. "neck": [10, 0, -5], "leftUpperArm": [0, 15, -45]).`;
 
         // Cosine Similarity helper for Vector Search over LTM
         function cosineSimilarity(vecA, vecB) {
@@ -621,11 +633,12 @@ ${visionSummary || "No active visual history"}
             'rightLittleProximal', 'rightLittleIntermediate', 'rightLittleDistal'
         ];
 
+        // Adjusted baseline posture: Arms hang vertically downward (resting A-pose)
         const defaultPose = {
-            leftUpperArm: [0, 0, -0.65],
-            rightUpperArm: [0, 0, 0.65],
-            spine: [0.05, 0, 0],
-            neck: [-0.05, 0, 0]
+            leftUpperArm: [0, 0, -1.35],
+            rightUpperArm: [0, 0, 1.35],
+            spine: [-0.05, 0, 0], // Slight forward inclination to prevent stiffness
+            neck: [0.05, 0, 0]
         };
 
         const boneStates = {};
@@ -692,31 +705,35 @@ ${visionSummary || "No active visual history"}
             const fingers = ['Index', 'Middle', 'Ring', 'Little'];
 
             if (state === 'fist') {
-                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * -0.3, sign * 0.3);
-                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.5);
-                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.5);
+                // To close the thumb inward/downward toward the palm
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * 0.3, -sign * 0.3);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, -sign * 0.5);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, -sign * 0.5);
+                // Inverted Sign calculation so fingers curl downward/inward instead of upward
                 fingers.forEach(f => {
-                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 1.1);
-                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 1.3);
-                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * 1.0);
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, -sign * 1.1);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, -sign * 1.3);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, -sign * 1.0);
                 });
             } else if (state === 'open') {
-                boneStates[side + 'ThumbMetacarpal'].target.set(0, 0, sign * -0.15);
-                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * -0.1);
-                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * -0.1);
+                // Open and extend fingers straight outward
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, 0, sign * 0.15);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.1);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.1);
                 fingers.forEach(f => {
-                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * -0.15);
-                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * -0.1);
-                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * -0.1);
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 0.15);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 0.1);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * 0.1);
                 });
             } else {
-                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * -0.1, sign * 0.1);
-                boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.15);
-                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.15);
+                // Soft, natural curved resting hand state
+                boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * 0.1, -sign * 0.1);
+                boneStates[side + 'ThumbProximal'].target.set(0, 0, -sign * 0.15);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, -sign * 0.15);
                 fingers.forEach(f => {
-                    boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 0.2);
-                    boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 0.2);
-                    boneStates[side + f + 'Distal'].target.set(0, 0, sign * 0.15);
+                    boneStates[side + f + 'Proximal'].target.set(0, 0, -sign * 0.2);
+                    boneStates[side + f + 'Intermediate'].target.set(0, 0, -sign * 0.2);
+                    boneStates[side + f + 'Distal'].target.set(0, 0, -sign * 0.15);
                 });
             }
         }
@@ -745,8 +762,14 @@ ${visionSummary || "No active visual history"}
                 const leftArmSwingVal = pose.leftArmSwing !== undefined ? pose.leftArmSwing : (pose.leftArm !== undefined ? pose.leftArm : 0);
                 const leftArmOutVal = pose.leftArmOut || 0;
                 const leftArmTwistVal = pose.leftArmTwist || 0;
-                const leftDefZ = defaultPose['leftUpperArm'] ? defaultPose['leftUpperArm'][2] : -0.65;
-                boneStates['leftUpperArm'].target.set(-leftArmSwingVal * toRad, leftArmTwistVal * toRad, leftDefZ - (leftArmOutVal * toRad));
+                const leftDefZ = defaultPose['leftUpperArm'] ? defaultPose['leftUpperArm'][2] : -1.35;
+                
+                // Fixed coordinate mapping: Twist mapped to X, Swing mapped to Y, Outward lift mapped to Z
+                boneStates['leftUpperArm'].target.set(
+                    leftArmTwistVal * toRad, 
+                    leftArmSwingVal * toRad, 
+                    leftDefZ + (leftArmOutVal * toRad)
+                );
             }
 
             // Direct bone array override (in degrees) or traditional parameter mapping for Right Upper Arm
@@ -760,8 +783,14 @@ ${visionSummary || "No active visual history"}
                 const rightArmSwingVal = pose.rightArmSwing !== undefined ? pose.rightArmSwing : (pose.rightArm !== undefined ? pose.rightArm : 0);
                 const rightArmOutVal = pose.rightArmOut || 0;
                 const rightArmTwistVal = pose.rightArmTwist || 0;
-                const rightDefZ = defaultPose['rightUpperArm'] ? defaultPose['rightUpperArm'][2] : 0.65;
-                boneStates['rightUpperArm'].target.set(-rightArmSwingVal * toRad, rightArmTwistVal * toRad, rightDefZ + (rightArmOutVal * toRad));
+                const rightDefZ = defaultPose['rightUpperArm'] ? defaultPose['rightUpperArm'][2] : 1.35;
+                
+                // Fixed coordinate mapping: Twist mapped to X, Swing mapped to Y (negative for symmetry), Outward lift mapped to Z
+                boneStates['rightUpperArm'].target.set(
+                    rightArmTwistVal * toRad, 
+                    -rightArmSwingVal * toRad, 
+                    rightDefZ - (rightArmOutVal * toRad)
+                );
             }
 
             // Left Lower Arm / Forearm handling with internal rotation limit (-180 to 180 degrees)
@@ -783,14 +812,14 @@ ${visionSummary || "No active visual history"}
             }
             if (pose.rightForearmRotate !== undefined) {
                 const rightForearmRotVal = Math.max(-180, Math.min(180, pose.rightForearmRotate));
-                boneStates['rightLowerArm'].target.y = rightForearmRotVal * toRad; // Aligned symmetrical positive direction
+                boneStates['rightLowerArm'].target.y = rightForearmRotVal * toRad;
             }
 
             // Neck / Head tilting with custom Frontal Tilt override (pitch angle, not side lateral)
             if (Array.isArray(pose.neck) && pose.neck.length === 3) {
                 boneStates['neck'].target.set(pose.neck[0] * toRad, pose.neck[1] * toRad, pose.neck[2] * toRad);
             } else {
-                const def = defaultPose['neck'] || [-0.05, 0, 0];
+                const def = defaultPose['neck'] || [0.05, 0, 0];
                 boneStates['neck'].target.set(def[0], def[1], def[2]);
             }
             if (pose.headFrontalTilt !== undefined) {
@@ -806,7 +835,11 @@ ${visionSummary || "No active visual history"}
 
             if (pose.leftKnee !== undefined) boneStates['leftLowerLeg'].target.set(pose.leftKnee * toRad, 0, 0);
             if (pose.rightKnee !== undefined) boneStates['rightLowerLeg'].target.set(pose.rightKnee * toRad, 0, 0);
-            if (pose.bodyLean !== undefined) boneStates['spine'].target.set(pose.bodyLean * toRad, 0, 0);
+            
+            // Fixed Spine Pitch: Inverted sign direction so bodyLean rotates forward (frontwise) instead of backward
+            if (pose.bodyLean !== undefined) {
+                boneStates['spine'].target.set(-pose.bodyLean * toRad, 0, 0);
+            }
             if (pose.hipsY !== undefined) boneStates['hips'].targetPos.set(0, pose.hipsY, 0);
 
             // Generic fallback skeletal bone targets (array in degrees [X, Y, Z])
@@ -1018,7 +1051,7 @@ ${visionSummary || "No active visual history"}
             } else if (action === "ANGRY") {
                 window.playMotionSequence([{ dur: 0.4, pose: { bodyLean: 15, leftArmSwing: 40, leftArmOut: -10, leftHandState: 'fist', rightArmSwing: 40, rightArmOut: -10, rightHandState: 'fist' } }, { dur: 1.5, pose: { bodyLean: 15, leftArmSwing: 45, leftArmOut: -12, leftHandState: 'fist', rightArmSwing: 45, rightArmOut: -12, rightHandState: 'fist' } }, { dur: 0.5, pose: {} }]);
             } else if (action === "HUG") {
-                // Symmetrical wrap-around arm coordinates with palms rotated in
+                // Fixed: Left and Right arms swing forward on the Y-axis and wrap inwards sRGB symmetrically
                 window.playMotionSequence([
                     { 
                         dur: 0.5, 
