@@ -538,10 +538,12 @@ ${visionSummary || "No active visual history"}
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         
-        // Critical for VRM/MToon colors to render correctly (prevents washed-out/plain white textures)
+        // Critical for VRM/MToon colors to render correctly (sRGB output)
         renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.0;
+        
+        // Disable filmic tone mapping. Toon shaders are flat anime-style and do not behave well 
+        // with realistic tone mapping, which squashes the colors and turns shaded body areas pitch black.
+        renderer.toneMapping = THREE.NoToneMapping; 
 
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.screenSpacePanning = true;
@@ -549,14 +551,13 @@ ${visionSummary || "No active visual history"}
         controls.update();
 
         // VRM MToon Lighting configuration
-        // MToon shaders look best with a single directional light and a well-lit ambient/hemisphere base.
-        // Too many overlapping lights cause overexposure (plain white) and harsh shadows.
-        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-        hemiLight.position.set(0, 10, 0);
-        scene.add(hemiLight);
+        // Toon shading works best with a flat Ambient Light (to keep shadows colorful) 
+        // and a single Directional Light (to define light direction).
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+        scene.add(ambientLight);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, Math.PI); // Key Light using standard physical intensity
-        dirLight.position.set(1.0, 2.0, 2.0);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); // Standard key light
+        dirLight.position.set(1.0, 2.0, 3.0);
         scene.add(dirLight);
 
         let currentVrm = null;
