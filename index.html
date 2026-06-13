@@ -237,17 +237,23 @@ Your current emotional state: {EMOTION}
 Your responses must strictly be valid JSON matching the following schema. Do not output anything outside of this schema:
 {
   "reply": "Your spoken conversational response here",
-  "action": "An action tag (e.g. WAVE, WALK, NOD, SHAKE_HEAD, SMILE, SAD, ANGRY, TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE, or null)",
+  "action": "An action tag (e.g. WAVE, WALK, NOD, SHAKE_HEAD, SMILE, SAD, ANGRY, HUG, JUMP, TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE, or null)",
   "custom_motion": [
     {
       "dur": 0.4,
       "reps": 1,
       "delay": 0.0,
       "pose": {
+        "hipsY": 0.0,
+        "bodyLean": 0.0,
+        "leftKnee": 0.0,
+        "rightKnee": 0.0,
+        "leftLegSwing": 0.0,
+        "rightLegSwing": 0.0,
         "leftUpperArm": [0, 0, -45],
         "rightUpperArm": [0, 0, 45],
         "leftForearmRotate": 90,
-        "rightForearmRotate": 0,
+        "rightForearmRotate": 90,
         "headFrontalTilt": 15,
         "smileIntensity": 0.8
       }
@@ -268,6 +274,8 @@ Preset Action Tags:
 - SMILE (smile happily)
 - SAD (look sad)
 - ANGRY (fists clenched)
+- HUG (wrap arms forward symmetrically for a warm embrace)
+- JUMP (bend knees, spring high into the air, absorb landing impact)
 - TILT_LEFT, TILT_RIGHT, SMILE_LEFT, SMILE_RIGHT, OPEN_MOUTH, RAISE_RIGHT_BROW, RAISE_LEFT_BROW, CLOSE_LEFT_EYE, CLOSE_RIGHT_EYE
 
 About Action Sequences in "custom_motion":
@@ -275,10 +283,17 @@ About Action Sequences in "custom_motion":
 - "dur": Transition duration in seconds.
 - "reps": Repeat/cycle count for this step (helps avoid spamming).
 - "delay": Hold duration in seconds at the target pose.
-- "pose": Custom skeleton and morph properties:
-  - Bone names (e.g., "leftUpperArm", "rightUpperArm") accept direct [X, Y, Z] rotation angles in degrees.
-  - "leftForearmRotate" & "rightForearmRotate": degrees of internal wrist/forearm twist (limited 0 to 180 degrees).
-  - "headFrontalTilt": degrees of forward/backward pitch tilt (nodding/looking up and down, orthogonal to side tilt).
+- "pose" containing:
+  - "hipsY": Vertical position offset of the hips (e.g., -0.3 to 0.6) for crouches, bounces, jumps, or landings.
+  - "bodyLean": Forward/backward tilt angle of the spine in degrees.
+  - "leftKnee" / "rightKnee": Knee flexion angle (0 to 90 degrees) for crouches, walking, or jumping.
+  - "leftLegSwing" / "rightLegSwing": Forward/backward leg swinging angles in degrees.
+  - "leftArmSwing" / "rightArmSwing": Forward/backward arm swing angles in degrees.
+  - "leftArmOut" / "rightArmOut": Outward arm raise angles in degrees.
+  - "leftArmTwist" / "rightArmTwist": Upper arm rotation angles in degrees.
+  - "leftUpperArm" / "rightUpperArm": Direct [X, Y, Z] joint rotation angles in degrees.
+  - "leftForearmRotate" / "rightForearmRotate": Forearm internal rotation/wrist twist angle (-180 to 180 degrees). Use identical values to twist symmetrically.
+  - "headFrontalTilt": Neck pitch angle looking up or down (-45 to 45 degrees, orthogonal to side tilt).
   - "smileIntensity": 0.0 to 1.0 custom expression smile factor.`;
 
         // Cosine Similarity helper for Vector Search over LTM
@@ -697,7 +712,7 @@ ${visionSummary || "No active visual history"}
             } else {
                 boneStates[side + 'ThumbMetacarpal'].target.set(0, sign * -0.1, sign * 0.1);
                 boneStates[side + 'ThumbProximal'].target.set(0, 0, sign * 0.15);
-                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.1);
+                boneStates[side + 'ThumbDistal'].target.set(0, 0, sign * 0.15);
                 fingers.forEach(f => {
                     boneStates[side + f + 'Proximal'].target.set(0, 0, sign * 0.2);
                     boneStates[side + f + 'Intermediate'].target.set(0, 0, sign * 0.2);
@@ -749,26 +764,26 @@ ${visionSummary || "No active visual history"}
                 boneStates['rightUpperArm'].target.set(-rightArmSwingVal * toRad, rightArmTwistVal * toRad, rightDefZ + (rightArmOutVal * toRad));
             }
 
-            // Left Lower Arm / Forearm handling with internal rotation limit (max 180 degrees)
+            // Left Lower Arm / Forearm handling with internal rotation limit (-180 to 180 degrees)
             if (Array.isArray(pose.leftLowerArm) && pose.leftLowerArm.length === 3) {
                 boneStates['leftLowerArm'].target.set(pose.leftLowerArm[0] * toRad, pose.leftLowerArm[1] * toRad, pose.leftLowerArm[2] * toRad);
             } else {
                 boneStates['leftLowerArm'].target.set(0, 0, 0);
             }
             if (pose.leftForearmRotate !== undefined) {
-                const leftForearmRotVal = Math.max(0, Math.min(180, pose.leftForearmRotate));
+                const leftForearmRotVal = Math.max(-180, Math.min(180, pose.leftForearmRotate));
                 boneStates['leftLowerArm'].target.y = leftForearmRotVal * toRad;
             }
 
-            // Right Lower Arm / Forearm handling with internal rotation limit (max 180 degrees)
+            // Right Lower Arm / Forearm handling with internal rotation limit (-180 to 180 degrees)
             if (Array.isArray(pose.rightLowerArm) && pose.rightLowerArm.length === 3) {
                 boneStates['rightLowerArm'].target.set(pose.rightLowerArm[0] * toRad, pose.rightLowerArm[1] * toRad, pose.rightLowerArm[2] * toRad);
             } else {
                 boneStates['rightLowerArm'].target.set(0, 0, 0);
             }
             if (pose.rightForearmRotate !== undefined) {
-                const rightForearmRotVal = Math.max(0, Math.min(180, pose.rightForearmRotate));
-                boneStates['rightLowerArm'].target.y = -rightForearmRotVal * toRad; // mirrored twist
+                const rightForearmRotVal = Math.max(-180, Math.min(180, pose.rightForearmRotate));
+                boneStates['rightLowerArm'].target.y = rightForearmRotVal * toRad; // Aligned symmetrical positive direction
             }
 
             // Neck / Head tilting with custom Frontal Tilt override (pitch angle, not side lateral)
@@ -1002,6 +1017,36 @@ ${visionSummary || "No active visual history"}
                 ]);
             } else if (action === "ANGRY") {
                 window.playMotionSequence([{ dur: 0.4, pose: { bodyLean: 15, leftArmSwing: 40, leftArmOut: -10, leftHandState: 'fist', rightArmSwing: 40, rightArmOut: -10, rightHandState: 'fist' } }, { dur: 1.5, pose: { bodyLean: 15, leftArmSwing: 45, leftArmOut: -12, leftHandState: 'fist', rightArmSwing: 45, rightArmOut: -12, rightHandState: 'fist' } }, { dur: 0.5, pose: {} }]);
+            } else if (action === "HUG") {
+                // Symmetrical wrap-around arm coordinates with palms rotated in
+                window.playMotionSequence([
+                    { 
+                        dur: 0.5, 
+                        pose: { 
+                            leftArmSwing: 40, leftArmOut: 50, leftArmTwist: 30, leftForearmRotate: 45,
+                            rightArmSwing: 40, rightArmOut: 50, rightArmTwist: -30, rightForearmRotate: 45,
+                            bodyLean: 5 
+                        } 
+                    },
+                    { 
+                        dur: 1.5, 
+                        pose: { 
+                            leftArmSwing: 45, leftArmOut: 55, leftArmTwist: 35, leftForearmRotate: 50,
+                            rightArmSwing: 45, rightArmOut: 55, rightArmTwist: -35, rightForearmRotate: 50,
+                            bodyLean: 5 
+                        } 
+                    },
+                    { dur: 0.5, pose: {} }
+                ]);
+            } else if (action === "JUMP") {
+                // Full spring, airborne pose holding, landing absorption, and return sequence
+                window.playMotionSequence([
+                    { dur: 0.25, pose: { leftKnee: 40, rightKnee: 40, hipsY: -0.25, bodyLean: 15, leftArmSwing: -20, rightArmSwing: -20 } },
+                    { dur: 0.2, pose: { leftKnee: 0, rightKnee: 0, hipsY: 0.45, bodyLean: -5, leftArmSwing: 60, rightArmSwing: 60, leftArmOut: 20, rightArmOut: 20 } },
+                    { dur: 0.15, pose: { leftKnee: 15, rightKnee: 15, hipsY: 0.5, bodyLean: 0, leftArmSwing: 40, rightArmSwing: 40 } },
+                    { dur: 0.2, pose: { leftKnee: 45, rightKnee: 45, hipsY: -0.28, bodyLean: 18, leftArmSwing: -10, rightArmSwing: -10 } },
+                    { dur: 0.3, pose: {} }
+                ]);
             } else if (action === "SMILE") { 
                 expressionTargets.happy = 1.0;
                 expressionTimer = 3.0; 
