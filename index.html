@@ -550,14 +550,14 @@ ${visionSummary || "No active visual history"}
         controls.target.set(0.0, 1.4, 0.0);
         controls.update();
 
-        // VRM MToon Lighting configuration
-        // Toon shading works best with a flat Ambient Light (to keep shadows colorful) 
-        // and a single Directional Light (to define light direction).
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+        // VRM MToon Soft/Eye-resting Lighting configuration
+        // A soft cool-toned ambient light keeps shadows colorful and gentle
+        const ambientLight = new THREE.AmbientLight(0xccd5e0, 0.4); 
         scene.add(ambientLight);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); // Standard key light
-        dirLight.position.set(1.0, 2.0, 3.0);
+        // A warm, low-intensity key light prevents white blowout and is easier on the eyes
+        const dirLight = new THREE.DirectionalLight(0xfff2e0, 0.5); 
+        dirLight.position.set(1.5, 2.0, 1.5); // Angled slightly to the side to create soft 3D depth
         scene.add(dirLight);
 
         let currentVrm = null;
